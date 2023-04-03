@@ -1,0 +1,28 @@
+version: "3"
+services:
+  cuda_env:
+    build: 
+      context: ./cuda_env
+      # arguments passed to Dockerfile
+      args:
+        # User settings in cuda_env
+        - DOCKER_USER=${DOCKER_USER}
+        - DOCKER_UID=${DOCKER_UID}
+        - DOCKER_GID=${DOCKER_GID}
+        - DOCKER_GROUPNAME=${DOCKER_GROUPNAME}
+        - DOCKER_PASS=${DOCKER_PASS}
+        - DOKCER_CUDA_VERSION=${DOKCER_CUDA_VERSION}
+    volumes:
+      # shared directory between container and local computer
+      - ./cuda_env/code:/home/${DOCKER_USER}/work
+    ipc: host
+    ulimits:
+        memlock: -1
+        stack: -1
+    stdin_open: true
+    tty: true
+    deploy:
+        resources:
+          reservations:
+              devices:
+                - capabilities: [gpu]
