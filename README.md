@@ -8,16 +8,32 @@ The 'cuda_env/code' directory is mounted to '~/work' in a container, so written 
 ## setup
 All you need to do is to set each parameter in the .env file.
 
-## starting up container
+## creating image and container if those dosent exist (starting container if those already exist)
 
 ### ubuntu
 ```sh
-docker-compose  up  -d
+docker-compose up -d
 ```
 
 ### WSL2 (if you want to use WSLg)
 ```sh
-docker-compose  -f  docker-compose.yml  -f  docker-compose.wslg.yml  up  -d
+docker-compose -f docker-compose.yml -f docker_compose_additional/docker-compose.wslg.yml up -d
+```
+If you run `docker-compose up -d` command after entering the command above, any containers that were previously created by the command above will be overwritten by new one, so please be careful (vice versa).
+
+## entering into existing container
+```sh
+docker-compose exec -it cuda_env bash
+```
+
+## starting existing stopped container
+```sh
+docker-compose start
+```
+
+## stopping existing running container
+```sh
+docker-compose stop
 ```
 
 # study about CUDA and GPU
