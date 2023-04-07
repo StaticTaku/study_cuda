@@ -63,7 +63,7 @@ int launchMyKernel(int arrayCount)
 int main()
 {
 
-	launchMyKernel(64);
+	launchMyKernel(20000);
 }
 
 /*
