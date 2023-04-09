@@ -15,6 +15,22 @@ constexpr int BLOCK_SIZE = 16;
 // We only use 2D grid and 2D block size
 namespace cuda_Matrix
 {
+    template <class T>
+    struct devPtr
+    {
+        T* device_target;
+
+        devPtr(const T& host_target)
+        {
+            cudaMalloc((void**)&device_target, sizeof(T));
+            cudaMemcpy(device_target, &host_target, sizeof(T), cudaMemcpyHostToDevice);
+        }
+
+        T* GetDevPtr() { return device_target; }
+
+        ~devPtr(){ cudaFree(device_target); }
+    };  
+
     struct Matrix 
     {
         int width;
@@ -32,9 +48,13 @@ namespace cuda_Matrix
         {
             reference_counter++;
             if(_onGpu)
+            {
                 cudaMalloc(&elements, size*sizeof(float));
+            }
             else
+            {
                 elements = new float[size];
+            }
         }
         
         //eg.
@@ -101,6 +121,8 @@ namespace cuda_Matrix
             }
         }
 
+        Matrix transpose();
+
         static void   Add(const Matrix& MatA, const Matrix& MatB, Matrix& MatC);
         static Matrix Add(const Matrix& MatA, const Matrix& MatB);
 
@@ -112,6 +134,11 @@ namespace cuda_Matrix
 
         static void   Mul(const Matrix& MatA, const Matrix& MatB, Matrix& MatC);
         static Matrix Mul(const Matrix& MatA, const Matrix& MatB);
+
+        static void Affine(const Matrix& Mat, const Matrix& x, const Matrix& bias, Matrix& MatA);
+        static Matrix Affine(const Matrix& Mat, const Matrix& x, const Matrix& bias);
+
+        static Matrix ScalarMul(float scalar, const Matrix& Mat);
 
         ~Matrix()
         {
@@ -165,10 +192,10 @@ namespace cuda_Matrix
         {
             int row = blockIdx.y * blockDim.y + threadIdx.y;
             int col = blockIdx.x * blockDim.x + threadIdx.x;
-
+            
             //Note that (MatA.width, MatA.height) == (MatB.width, MatB.height) has to be true
             int id  = row*MatA->width + col;
-            if (id < MatA->size)
+            if (row < MatA->height && col < MatA->width)
                 MatC->elements[id] = MatA->elements[id] + MatB->elements[id];
         }
 
@@ -180,7 +207,7 @@ namespace cuda_Matrix
 
             //Note that (MatA.width, MatA.height) == (MatB.width, MatB.height) has to be true
             int id  = row*MatA->width + col;
-            if (id < MatA->size)
+            if (row < MatA->height && col < MatA->width)
                 MatC->elements[id] = MatA->elements[id] - MatB->elements[id];
         }
 
@@ -192,10 +219,12 @@ namespace cuda_Matrix
 
             //Note that (MatA.width, MatA.height) == (MatB.width, MatB.height) has to be true
             int id  = row*MatA->width + col;
-            if (id < MatA->size)
+            if (row < MatA->height && col < MatA->width)
                 MatC->elements[id] = MatA->elements[id] * MatB->elements[id];
         }
         
+        //TO DO: this function is correct when MatA and MatB has dimmensions that are multiples of BLOCK_SIZE.
+        //To support any dimmensions, we should add padded Matrix.
         __global__
         void Mul(const Matrix* MatA, const Matrix* MatB, Matrix* MatC)
         {
@@ -210,7 +239,7 @@ namespace cuda_Matrix
             //id of the Sub matrix
             int row = threadIdx.y;
             int col = threadIdx.x;
-
+            
             for (int m = 0; m < ((MatA->width + BLOCK_SIZE - 1)/ BLOCK_SIZE); ++m)
             {
                 Reference_SubMatrix Asub(*MatA, blockRow*BLOCK_SIZE, m*BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
@@ -234,19 +263,110 @@ namespace cuda_Matrix
         }
 
         __global__
+        void Affine(const Matrix* Mat, const Matrix* x, const Matrix* bias, Matrix* MatA)
+        {
+            int row = blockIdx.y * blockDim.y + threadIdx.y;
+            int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+            int MatA_width = Mat->width;
+            int MatB_width = x->width;
+            
+            if(row < Mat->height && col < x->width)
+            {
+                float Cvalue = 0;
+                for(int e = 0; e < MatA_width; ++e)
+                {   
+                    Cvalue += Mat->elements[row * MatA_width + e] * x->elements[e * MatB_width + col];
+                }
+                MatA->elements[row * MatA->width + col] = Cvalue + bias->elements[row];
+            }
+        }
+
+        __global__
         void Mul_slow(const Matrix* MatA, const Matrix* MatB, Matrix* MatC)
         {
-            float Cvalue = 0;
-
             int row = blockIdx.y * blockDim.y + threadIdx.y;
             int col = blockIdx.x * blockDim.x + threadIdx.x;
 
             int MatA_width = MatA->width;
             int MatB_width = MatB->width;
             
-            for(int e = 0; e < MatA_width; ++e)
-                Cvalue += MatA->elements[row * MatA_width + e] * MatB->elements[e * MatB_width + col];
-            MatC->elements[row * MatC->width + col] = Cvalue;
+            if(row < MatA->height && col < MatB->width)
+            {
+                float Cvalue = 0;
+                for(int e = 0; e < MatA_width; ++e)
+                {   
+                    Cvalue += MatA->elements[row * MatA_width + e] * MatB->elements[e * MatB_width + col];
+                }
+                MatC->elements[row * MatC->width + col] = Cvalue;
+            }
+        }
+
+        __global__
+        void set_transpose(const Matrix* MatA, Matrix* MatB)
+        {
+            int row = blockIdx.y * blockDim.y + threadIdx.y;
+            int col = blockIdx.x * blockDim.x + threadIdx.x;
+            int height = MatB->height;
+            int width  = MatB->width;
+
+            if(row < height && col < width)
+                MatB->elements[row*width + col] = MatA->elements[col*height + row];
+        }
+
+        __global__
+        void multiple_scalar(float scalar, const Matrix* Mat, Matrix* MatA)
+        {
+            int row = blockIdx.y * blockDim.y + threadIdx.y;
+            int col = blockIdx.x * blockDim.x + threadIdx.x;
+            int height = Mat->height;
+            int width  = Mat->width;
+
+            if(row < height && col < width)
+                MatA->elements[row*width + col] = scalar*Mat->elements[row*width + col];
+        }
+
+        __global__
+        void RelU(const Matrix* x, Matrix* mask, Matrix* output)
+        {
+            int row = blockIdx.y * blockDim.y + threadIdx.y;
+            int col = blockIdx.x * blockDim.x + threadIdx.x;
+            int height = x->height;
+            int width  = x->width;
+            if(row < height && col < width)
+            {
+                int id = row*width + col;
+                if(x->elements[id] <= 0)
+                {
+                    output->elements[id] = 0; 
+                    mask->elements[id] = 1;
+                }else
+                {
+                    output->elements[id] = x->elements[id]; 
+                    mask->elements[id] = 0;
+                }
+            }
+        }
+
+        __global__
+        void hide_with_mask(const Matrix* delta, const Matrix* mask, Matrix* output)
+        {
+            int row = blockIdx.y * blockDim.y + threadIdx.y;
+            int col = blockIdx.x * blockDim.x + threadIdx.x;
+            int height = delta->height;
+            int width  = delta->width;
+
+            if(row < height && col < width)
+            {
+                int id = row*width + col;
+                if(mask->elements[id] <= 0.5)
+                {
+                    output->elements[id] = delta->elements[id];
+                }else
+                {
+                    output->elements[id] = 0;
+                }
+            }
         }
     }
 
@@ -260,22 +380,6 @@ namespace cuda_Matrix
             Mul,
         };
 
-        template <class T>
-        struct devPtr
-        {
-            T* device_target;
-
-            devPtr(const T& host_target)
-            {
-                cudaMalloc((void**)&device_target, sizeof(T));
-                cudaMemcpy(device_target, &host_target, sizeof(T), cudaMemcpyHostToDevice);
-            }
-
-            T* GetDevPtr() { return device_target; }
-
-            ~devPtr(){ cudaFree(device_target); }
-        };  
-
         void BinaryOperation(const Matrix& MatA, const Matrix& MatB, Matrix& MatC, Op_Binary op)
         {
             switch (op)
@@ -283,7 +387,7 @@ namespace cuda_Matrix
                 case Op_Binary::Add:
                 case Op_Binary::Sub:
                 case Op_Binary::Had:
-                    assert(MatA.width == MatB.width && MatA.height == MatB.height && MatC.width == MatA.height && MatC.width == MatA.width);
+                    assert(MatA.width == MatB.width && MatA.height == MatB.height && MatC.width == MatA.width && MatC.height == MatA.height);
                     break;
                 case Op_Binary::Mul:
                     assert(MatA.width == MatB.height && MatC.width == MatB.width && MatC.height == MatA.height);
@@ -294,7 +398,9 @@ namespace cuda_Matrix
             int height = MatC.height;
 
             dim3 dimBlock(BLOCK_SIZE,BLOCK_SIZE);
-            dim3 dimGrid ((width + dimBlock.x - 1) / dimBlock.x, (height + dimBlock.x - 1) / dimBlock.y);
+            dim3 dimGrid ((width + dimBlock.x - 1) / dimBlock.x, (height + dimBlock.y - 1) / dimBlock.y);
+            //std::cout << width << std::endl;
+            //std::cout << dimGrid.x << " " << dimGrid.y << std::endl;
             if(MatA.onGpu && MatC.onGpu && MatC.onGpu)//calculation on GPU
             {
                 switch (op) 
@@ -309,7 +415,7 @@ namespace cuda_Matrix
                         Kernel::Had<<<dimGrid, dimBlock>>>(devPtr<Matrix>(MatA).GetDevPtr(), devPtr<Matrix>(MatB).GetDevPtr(), devPtr<Matrix>(MatC).GetDevPtr());
                         break;
                     case Op_Binary::Mul:
-                        Kernel::Mul<<<dimGrid, dimBlock>>>(devPtr<Matrix>(MatA).GetDevPtr(), devPtr<Matrix>(MatB).GetDevPtr(), devPtr<Matrix>(MatC).GetDevPtr());
+                        Kernel::Mul_slow<<<dimGrid, dimBlock>>>(devPtr<Matrix>(MatA).GetDevPtr(), devPtr<Matrix>(MatB).GetDevPtr(), devPtr<Matrix>(MatC).GetDevPtr());
                         break;
                 }
                 cudaDeviceSynchronize();
@@ -353,6 +459,18 @@ namespace cuda_Matrix
             }
         }
     };
+
+    Matrix Matrix::transpose()
+    {
+        Matrix transpose(height, width, onGpu);
+
+        dim3 dimBlock(BLOCK_SIZE,BLOCK_SIZE);
+        dim3 dimGrid ((transpose.width + dimBlock.x - 1) / dimBlock.x, (transpose.height + dimBlock.y - 1) / dimBlock.y);
+
+        Kernel::set_transpose<<<dimGrid, dimBlock>>>(devPtr<Matrix>(*this).GetDevPtr(), devPtr<Matrix>(transpose).GetDevPtr());
+        cudaDeviceSynchronize();
+        return transpose;
+    }
 
     void Matrix::Add(const Matrix& MatA, const Matrix& MatB, Matrix& MatC)
     {
@@ -400,6 +518,50 @@ namespace cuda_Matrix
         Matrix MatC(MatB.width, MatA.height, MatA.onGpu);
         BinaryOperation(MatA, MatB, MatC, Op_Binary::Mul);
         return MatC;
+    }
+
+    void Matrix::Affine(const Matrix& Mat, const Matrix& x, const Matrix& bias, Matrix& MatA)
+    {
+        assert(Mat.width == x.height && bias.height == Mat.height);
+        assert(bias.width == 1);
+        assert(MatA.width == x.width && MatA.height == Mat.height);
+
+        int width = MatA.width;
+        int height = MatA.height;
+
+        dim3 dimBlock(BLOCK_SIZE,BLOCK_SIZE);
+        dim3 dimGrid ((width + dimBlock.x - 1) / dimBlock.x, (height + dimBlock.y - 1) / dimBlock.y);
+
+        Kernel::Affine<<< dimGrid, dimBlock >>>(devPtr<Matrix>(Mat).GetDevPtr(), devPtr<Matrix>(x).GetDevPtr(), devPtr<Matrix>(bias).GetDevPtr(), devPtr<Matrix>(MatA).GetDevPtr());
+        cudaDeviceSynchronize();
+    }
+
+    Matrix Matrix::Affine(const Matrix& Mat, const Matrix& x, const Matrix& bias)
+    {
+        assert(Mat.width == x.height && bias.height == Mat.height);
+        assert(bias.width == 1);
+        Matrix MatA(x.width, Mat.height, Mat.onGpu);
+
+        int width = MatA.width;
+        int height = MatA.height;
+
+        dim3 dimBlock(BLOCK_SIZE,BLOCK_SIZE);
+        dim3 dimGrid ((width + dimBlock.x - 1) / dimBlock.x, (height + dimBlock.y - 1) / dimBlock.y);
+
+        Kernel::Affine<<< dimGrid, dimBlock>>>(devPtr<Matrix>(Mat).GetDevPtr(), devPtr<Matrix>(x).GetDevPtr(), devPtr<Matrix>(bias).GetDevPtr(), devPtr<Matrix>(MatA).GetDevPtr());
+        cudaDeviceSynchronize();
+        return MatA;
+    }
+
+    Matrix Matrix::ScalarMul(float scalar, const Matrix& Mat)
+    {
+        Matrix output(Mat.width, Mat.height, Mat.onGpu);
+
+        dim3 dimBlock(BLOCK_SIZE,BLOCK_SIZE);
+        dim3 dimGrid ((output.width + dimBlock.x - 1) / dimBlock.x, (output.height + dimBlock.y - 1) / dimBlock.y);
+        Kernel::multiple_scalar<<<dimGrid, dimBlock>>>(scalar, devPtr<Matrix>(Mat).GetDevPtr(), devPtr<Matrix>(output).GetDevPtr());
+        cudaDeviceSynchronize();
+        return output;
     }
 
 };

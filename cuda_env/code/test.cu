@@ -26,13 +26,13 @@ int main()
     printf("maxThreadsPerSM: %d\nmaxThreadsPerBlock: %d\nnumberOfSM: %d\nwarp_size: %d\nmaxThreadsforCpu: %d\n", 
     maxThreadsPerSM, maxThreadsPerBlock, numberOfSM, warp_size, maxThreadsforCpu);
 
-    printf("\n\n\n\n\n");
+    printf("''''''''''''''''''''''''''''''''''''''''''''''''''''''''''\n");
     //////////////////////////////////////////////////////////////////////////////////////////
     std::chrono::high_resolution_clock::time_point start;
     std::chrono::high_resolution_clock::time_point end;
     std::chrono::microseconds::rep duration;
-    constexpr int width  = BLOCK_SIZE*100;
-    constexpr int height = BLOCK_SIZE*100;
+    int width  = BLOCK_SIZE*100;
+    int height = BLOCK_SIZE*100;
 
     //mul test using GPU
     {
@@ -76,7 +76,40 @@ int main()
     }
     std::cout << "Matrix Multiplication test using GPU passed\n";
     std::cout << "duration: " << duration << "(ms)\n";
-    
+
+    //mul test using CPU
+    {
+        Matrix h_MatA(width, height);
+        Matrix h_MatB(width, height);
+        Matrix h_MatC(width, height);
+
+        //initialize value
+        for(int row = 0;row < height; ++row)
+        {
+            for(int column = 0;column < width; ++column)
+            {
+                h_MatA.elements[row*width + column] = 0.5;
+                h_MatB.elements[row*width + column] = 0.5;
+            }
+        }
+        start = std::chrono::high_resolution_clock::now();
+        Matrix::Mul(h_MatA, h_MatB, h_MatC);
+        end = std::chrono::high_resolution_clock::now();
+        duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+        
+        for(int row = 0;row < height; ++row)
+        {
+            for(int column = 0;column < width; ++column)
+            {
+                assert(h_MatC.elements[row*width + column] ==  height*0.25);
+            }
+        }
+    }
+    std::cout << "Matrix Multiplication test using CPU passed\n";
+    std::cout << "duration: " << duration << "(ms)\n";
+
+    width  = 2343;
+    height = 1333;
     //add test using GPU
     {
         Matrix h_MatA(width, height);
