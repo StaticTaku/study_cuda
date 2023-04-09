@@ -13,9 +13,9 @@ output_extension=".out"
 # compiling with '-code=sm_75' produces binary code for devices of compute capability 7.5 from PTX code
 # PTX code can be 
 if [[ "$*" == *"--openmp"* ]]; then
-  nvcc -c $file -Xcompiler -fopenmp -arch=compute_80 -code=sm_80
+  nvcc -c $file -Xcompiler -fopenmp -Iinclude -arch=compute_80 -code=sm_80
   nvcc $file_name.o -o $file_name$output_extension -lgomp
   rm $file_name.o
 else
-  nvcc $file -o $file_name$output_extension -arch=compute_80 -code=sm_80 -lgomp
+  nvcc $file -o $file_name$output_extension -Iinclude -arch=compute_80 -code=sm_80 -lgomp
 fi
