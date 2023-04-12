@@ -6,6 +6,7 @@
 #include <memory>
 #include <cassert>
 #include <omp.h>
+#include <fstream>
 #include <chrono>
 
 constexpr int BLOCK_SIZE = 16;
@@ -525,7 +526,6 @@ namespace cuda_Matrix
         assert(Mat.width == x.height && bias.height == Mat.height);
         assert(bias.width == 1);
         assert(MatA.width == x.width && MatA.height == Mat.height);
-
         int width = MatA.width;
         int height = MatA.height;
 
@@ -544,12 +544,12 @@ namespace cuda_Matrix
 
         int width = MatA.width;
         int height = MatA.height;
-
+    
         dim3 dimBlock(BLOCK_SIZE,BLOCK_SIZE);
         dim3 dimGrid ((width + dimBlock.x - 1) / dimBlock.x, (height + dimBlock.y - 1) / dimBlock.y);
-
         Kernel::Affine<<< dimGrid, dimBlock>>>(devPtr<Matrix>(Mat).GetDevPtr(), devPtr<Matrix>(x).GetDevPtr(), devPtr<Matrix>(bias).GetDevPtr(), devPtr<Matrix>(MatA).GetDevPtr());
         cudaDeviceSynchronize();
+        
         return MatA;
     }
 
@@ -563,5 +563,31 @@ namespace cuda_Matrix
         cudaDeviceSynchronize();
         return output;
     }
+
+    void print_matrix(const Matrix& data)
+    {
+        assert(!data.onGpu);
+        for(int row = 0;row<data.height;++row)
+            for(int column = 0;column<data.width;++column)
+                printf("%d,%d,%f\n", row, column, data.elements[row*data.width + column]);
+    }
+
+    void if_same_matrix(const Matrix& MatA, const Matrix& MatB)
+    {
+        assert(!MatA.onGpu);
+        for(int row = 0;row<MatA.height;++row)
+            for(int column = 0;column<MatA.width;++column)
+                assert(MatA.elements[row*MatA.width + column] - MatB.elements[row*MatA.width + column] < 1e-5);
+    }
+
+    void load_data(std::string file_path, Matrix& data)
+    {
+        std::ifstream file(file_path);
+        assert(file);
+        for(int row = 0;row<data.height;++row)
+            for(int column = 0;column<data.width;++column)
+                file >> data.elements[row*data.width + column];
+    }
+
 
 };

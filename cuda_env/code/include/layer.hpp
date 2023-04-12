@@ -16,7 +16,7 @@ void generate_normal_weights(Matrix* _weight, int seed)
     curandState_t state;
     curand_init(seed, id, 0, &state);
     if(row < _weight->height && col < _weight->width)
-        _weight->elements[id] = 1;
+        _weight->elements[id] = curand_normal(&state);
         //_weight->elements[id] = curand_normal(&state) * stddev + mean;
         //stddev:偏差 mean:平均
 }
@@ -26,7 +26,7 @@ void initialize_bias(Matrix* _bias, int seed)
 {
     int id  = blockIdx.x * blockDim.x + threadIdx.x;
     if (id < _bias->size)
-        _bias->elements[id] = id;
+        _bias->elements[id] = 0;
 }
 
 __global__ 
@@ -251,22 +251,8 @@ struct Affine
     {
         Matrix test(weight.height, weight.width);
         test = weight.transpose();
-        for(int row = 0;row<test.height;++row)
-        {
-            for(int column = 0;column<test.width;++column)
-            {
-                assert(test.elements[row*test.width + column] == 1);
-            }
-        }
         Matrix delta2(delta.width, delta.height);
         delta2 = delta;
-        for(int row = 0;row<delta2.height;++row)
-        {
-            for(int column = 0;column<delta2.width;++column)
-            {
-                assert(delta2.elements[row*delta2.width + column] == 1);
-            }
-        }
         
         Matrix output = Matrix::Mul(weight.transpose(), delta);
         Matrix input_transpose = input.transpose();
@@ -348,7 +334,7 @@ struct SoftMaxWithLoss//lastlayer
         return loss;
     }
 
-    Matrix backward(Matrix& delta)
+    Matrix backward()
     {
         Matrix output = Matrix::Sub(y, t);
         return output;
