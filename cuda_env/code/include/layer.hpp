@@ -18,6 +18,7 @@ void generate_normal_weights(Matrix* _weight, int seed)
     if(row < _weight->height && col < _weight->width)
         _weight->elements[id] = 1;
         //_weight->elements[id] = curand_normal(&state) * stddev + mean;
+        //stddev:偏差 mean:平均
 }
 
 __global__ 
