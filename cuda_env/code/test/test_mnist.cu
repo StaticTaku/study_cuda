@@ -29,6 +29,30 @@ struct TwoLayerNetwork
 
     }
 
+    void change_batch_size(int batch_size)
+    {
+        Affine1.input.width = batch_size;
+        Affine1.one_vector.height = batch_size;
+        Affine1.batch_size = batch_size;
+
+        RelU1.batch_size = batch_size;
+        RelU1.mask.width = batch_size;
+
+        Affine2.input.width = batch_size;
+        Affine2.one_vector.height = batch_size;
+        Affine2.batch_size = batch_size;
+
+        SoftMaxWithLoss1.y.width = batch_size;
+        SoftMaxWithLoss1.t.width = batch_size;
+        SoftMaxWithLoss1.loss.width = batch_size;
+        SoftMaxWithLoss1.batch_size = batch_size;
+    }
+
+    Matrix predict_num(const Matrix& data)
+    {
+        return Matrix::ArgMax_par_col(predict(data));
+    }
+
     Matrix predict(const Matrix& data)
     {
         Matrix result = Affine2.forward(RelU1.forward(Affine1.forward(data)));
@@ -41,11 +65,28 @@ struct TwoLayerNetwork
         return SoftMaxWithLoss1.forward(predict(data), teacher);
     }
 
+    float accuracy(const Matrix& data, const Matrix& teacher)
+    {
+        Matrix list_argmax_data(data.width, 1);
+        Matrix list_argmax_teacher(teacher.width, 1);
+
+        list_argmax_data    = Matrix::ArgMax_par_col(predict(data));
+        list_argmax_teacher = Matrix::ArgMax_par_col(teacher);
+
+        float sum = 0;
+        #pragma omp parallel for reduction(+:sum)
+        for(int i = 0;i<data.width;++i)
+        {
+            if(list_argmax_data.elements[i] - list_argmax_teacher.elements[i] < 1e-5)
+                sum++;
+        }
+        return sum / data.width;
+    }
+
     void update_weight_bias(const Matrix& x, const Matrix& t, float learning_rate)
     {
         //forward
         loss(x, t);
-
         //backward
         Affine1.backward(RelU1.backward(Affine2.backward(SoftMaxWithLoss1.backward())));
 
@@ -59,9 +100,9 @@ struct TwoLayerNetwork
     void forward_backward_test(const Matrix& x, const Matrix& t, float learning_rate)
     {
         //forward
-        Matrix loss_value(1,1);
+        Matrix loss_value(2,1);
         loss_value = loss(x, t);
-        assert(loss_value.elements[0] - 0.018638 < 1e-5);
+        assert(loss_value.elements[0] - 0.018638 < 1e-5 && loss_value.elements[1] - 1.1442640263885358e-05 < 1e-5);
         std::cout << "forward test passed\n";
 
         //backward
@@ -148,13 +189,46 @@ struct TwoLayerNetwork
     }
 };
 
+#include <random>
+std::mt19937 engine(1);
 
+// 一様実数分布
+// [-1.0, 1.0)の値の範囲で、等確率に実数を生成する
+std::uniform_real_distribution<> dist1(-1.0, 1.0);
 int main()
 {
+    Matrix h_test(20,10);
+    Matrix ans(h_test.width,1);
+    for(int row = 0; row < h_test.height; ++row)
+        for(int col = 0; col < h_test.width; ++col)
+            h_test.elements[row*h_test.width + col] = dist1(engine);
+
+    int max_id[h_test.width];
+    for(int col = 0; col < h_test.width; ++col)
+    {
+        float max = h_test.elements[col];
+        max_id[col] = 0;
+        for(int row = 1; row < h_test.height; ++row)
+        {
+            if(h_test.elements[row * h_test.width + col] > max) 
+            {
+                max = h_test.elements[row * h_test.width + col];
+                max_id[col] = row;
+            }
+        }
+    }
+    Matrix d_test(h_test.width,h_test.height,true);
+    d_test = h_test;
+    ans = Matrix::ArgMax_par_col(d_test);
+    for(int row = 0; row < ans.height; ++row)
+        for(int col = 0; col < ans.width; ++col)
+            assert(ans.elements[row*ans.width + col] == max_id[col]);
+
+    
     int   input_size = 784;
     int   hidden_size = 50;
     int   output_size = 10; //classification number
-    int   batch_size  = 1;
+    int   batch_size  = 2;
     float learning_rate = 0.1;
     TwoLayerNetwork network(input_size, hidden_size, batch_size, output_size);
 
@@ -172,8 +246,8 @@ int main()
     load_data("data/b1.tsv", h_bias1);
     load_data("data/W2.tsv", h_weight2);
     load_data("data/b2.tsv", h_bias2);
-    load_data("data/input.tsv", h_input);
-    load_data("data/teacher.tsv", h_teacher);
+    load_data("data/input2.tsv", h_input);
+    load_data("data/teacher2.tsv", h_teacher);
 
     d_input   = h_input;
     d_teacher = h_teacher;
@@ -185,6 +259,8 @@ int main()
     
     Matrix result(batch_size, output_size);
     result = network.predict(d_input);
+    //print_matrix(result);
 
     network.forward_backward_test(d_input, d_teacher, learning_rate);
+    assert(network.accuracy(d_input,d_teacher) == 1);
 }

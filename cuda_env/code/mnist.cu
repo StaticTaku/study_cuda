@@ -55,6 +55,25 @@ struct TwoLayerNetwork
         Affine2.weight = Matrix::Add(Affine2.weight, Matrix::ScalarMul(-learning_rate, Affine2.delta_weight));
         Affine2.bias   = Matrix::Add(Affine2.bias  , Matrix::ScalarMul(-learning_rate, Affine2.delta_bias));
     }
+
+    float accuracy(const Matrix& data, const Matrix& teacher)
+    {
+        Matrix list_argmax_data(data.width, 1);
+        Matrix list_argmax_teacher(teacher.width, 1);
+
+        list_argmax_data    = Matrix::ArgMax_par_col(predict(data));
+        list_argmax_teacher = Matrix::ArgMax_par_col(teacher);
+
+        float sum = 0;
+        #pragma omp parallel for reduction(+:sum)
+        for(int i = 0;i<data.width;++i)
+        {
+            if(list_argmax_data.elements[i] - list_argmax_teacher.elements[i] < 1e-5)
+                sum++;
+        }
+
+        return sum / data.width;
+    }
 };
 
 
@@ -94,6 +113,6 @@ int main()
     
     Matrix result(batch_size, output_size);
     result = network.predict(d_input);
-    //print_matrix(result);
+    print_matrix(result);
     network.update_weight_bias(d_input, d_teacher, learning_rate);
 }

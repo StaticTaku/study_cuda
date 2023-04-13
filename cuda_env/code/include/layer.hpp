@@ -77,6 +77,7 @@ void set_sum_value_par_col(const Matrix* x, Matrix* max_value, int two_n)
 
 }
 
+
 __global__
 void set_max_value_par_col(const Matrix* x, Matrix* max_value, int two_n)
 {
@@ -116,6 +117,7 @@ void set_max_value_par_col(const Matrix* x, Matrix* max_value, int two_n)
     }
 
 }
+
 
 __global__
 void kernel_softmax(const Matrix* x, Matrix* sum_value, Matrix* max_value, Matrix* output, int two_n)

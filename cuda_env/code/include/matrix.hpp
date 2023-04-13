@@ -141,6 +141,13 @@ namespace cuda_Matrix
 
         static Matrix ScalarMul(float scalar, const Matrix& Mat);
 
+        static Matrix ArgMax_par_col(const Matrix& x);
+
+        void change_shape(int _width, int _height)
+        {
+            width = _width; height = _height; size = _width * _height; size_byte = size * sizeof(float);
+        }
+
         ~Matrix()
         {
             if(reference_counter == 1 && elements != nullptr)
@@ -369,6 +376,28 @@ namespace cuda_Matrix
                 }
             }
         }
+
+        __global__
+        void set_max_id_of_value_par_col(const Matrix* x, Matrix* max_value)
+        {
+            int col = blockIdx.x * blockDim.x + threadIdx.x;
+            int max_id = 0;
+            float max = -1e5;
+
+            if(col < x->width)
+            {
+                max = x->elements[col];
+                for(int row = 1;row < x->height;++row)
+                {
+                    if(x->elements[row * x->width + col] > max)
+                    {
+                        max_id = row;
+                        max = x->elements[row * x->width + col];
+                    }
+                }
+                max_value->elements[col] = max_id;
+            }
+        }
     }
 
     namespace
@@ -564,12 +593,33 @@ namespace cuda_Matrix
         return output;
     }
 
+    Matrix Matrix::ArgMax_par_col(const Matrix& x)
+    {
+        Matrix max_value(x.width, 1, x.onGpu);//max_value[col] = max(x[0][col],x[1][col], , ,)
+        dim3 dimBlock(32*6);
+        dim3 dimGrid ((x.width + dimBlock.x - 1) / dimBlock.x);
+        Kernel::set_max_id_of_value_par_col<<< dimGrid, dimBlock >>>(devPtr<Matrix>(x).GetDevPtr(), devPtr<Matrix>(max_value).GetDevPtr());
+        cudaDeviceSynchronize();
+        return max_value;
+    }
+
+    
+
     void print_matrix(const Matrix& data)
     {
-        assert(!data.onGpu);
-        for(int row = 0;row<data.height;++row)
-            for(int column = 0;column<data.width;++column)
-                printf("%d,%d,%f\n", row, column, data.elements[row*data.width + column]);
+        if(!data.onGpu)
+        {
+            for(int row = 0;row<data.height;++row)
+                for(int column = 0;column<data.width;++column)
+                    printf("%d,%d,%f\n", row, column, data.elements[row*data.width + column]);
+        }else
+        {
+            Matrix copy(data.width, data.height);
+            copy = data;
+            for(int row = 0;row<data.height;++row)
+                for(int column = 0;column<data.width;++column)
+                    printf("%d,%d,%f\n", row, column, copy.elements[row*data.width + column]);
+        }
     }
 
     void if_same_matrix(const Matrix& MatA, const Matrix& MatB)
@@ -587,6 +637,7 @@ namespace cuda_Matrix
         for(int row = 0;row<data.height;++row)
             for(int column = 0;column<data.width;++column)
                 file >> data.elements[row*data.width + column];
+        file.close();
     }
 
 
